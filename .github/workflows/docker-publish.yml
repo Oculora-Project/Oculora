@@ -8,7 +8,7 @@ on:
       - 'v*.*.*'    # バージョンタグも対象
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/oculora
+  IMAGE_NAME: ghcr.io/oculora/oculora 
 
 jobs:
   build-and-push:
