@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+httpx
+yt-dlp
+aiocache
+selenium
+webdriver-manager
+selenium-stealth
+aiocache
