@@ -3,6 +3,8 @@ name: Python package
 on:
   push:
     branches: [ "main" ]
+    tags:
+      - 'v*.*.*'  # タグ push でパッケージ公開
   pull_request:
     branches: [ "main" ]
 
@@ -52,15 +54,32 @@ jobs:
       env:
         DISPLAY: ":99"
       run: |
-        # Seleniumによるテストが含まれる場合はXvfbを起動
         Xvfb :99 -screen 0 1024x768x24 &
         sleep 3
-        # テストディレクトリがない場合も考慮
         if [ -d "tests" ]; then
           pytest tests/ -v
         else
-          echo "No tests directory found, creating basic test..."
           mkdir -p tests
           echo 'def test_basic(): assert True' > tests/test_basic.py
           pytest tests/ -v
         fi
+
+    # ---- ここからパッケージビルド＆公開 ----
+    - name: Install build tools
+      run: |
+        python -m pip install --upgrade pip setuptools wheel twine build
+
+    - name: Build Python package
+      run: |
+        python -m build
+
+    - name: Publish to GitHub Packages
+      if: startsWith(github.ref, 'refs/tags/')
+      env:
+        PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+      run: |
+        python -m twine upload \
+          --repository-url https://pypi.pkg.github.com/YOUR_USERNAME \
+          dist/* \
+          -u oculora-project \
+          -p $PYPI_TOKEN
