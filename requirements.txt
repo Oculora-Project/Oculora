@@ -6,4 +6,5 @@ aiocache
 selenium
 webdriver-manager
 selenium-stealth
-aiocache
+psutil
+python-dotenv
