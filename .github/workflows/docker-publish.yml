@@ -1,0 +1,41 @@
+name: Build and Publish Docker Image
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*.*.*'    # バージョンタグも対象
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/oculora
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Log in to GHCR
+      uses: docker/login-action@v2
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build Docker image
+      run: |
+        docker build -t $IMAGE_NAME:latest .
+        # バージョンタグがある場合はタグづけ
+        if [ "${GITHUB_REF_TYPE}" == "tag" ]; then
+          docker tag $IMAGE_NAME:latest $IMAGE_NAME:${GITHUB_REF_NAME}
+        fi
+
+    - name: Push Docker image
+      run: |
+        docker push $IMAGE_NAME:latest
+        if [ "${GITHUB_REF_TYPE}" == "tag" ]; then
+          docker push $IMAGE_NAME:${GITHUB_REF_NAME}
+        fi
