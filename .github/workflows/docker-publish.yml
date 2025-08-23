@@ -22,7 +22,7 @@ jobs:
       uses: docker/login-action@v2
       with:
         registry: ghcr.io
-        username: ${{ github.actor }}
+        username: yunfie-twitter
         password: ${{ secrets.CR_PAT }}  # PATをGitHub Secretsに登録しておく
 
     - name: Build Docker image
