@@ -21,7 +21,7 @@ project_root/
 ├── .gitignore  
 ├── README.md  
 ├── config/  
-│ ├── **init**.py  
+│ ├── __init__.py  
 │ └── config.py  
 └── routers/  
 ├── proxy_handler.py  
