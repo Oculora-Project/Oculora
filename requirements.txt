@@ -8,3 +8,5 @@ webdriver-manager
 selenium-stealth
 psutil
 python-dotenv
+pytest
+pytest-asyncio
