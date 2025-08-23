@@ -78,7 +78,7 @@ async def stream_ts_cached(urls: list, headers: dict,
     data_buffer = bytearray()
 
     async def fetch_segment(seg_url: str):
-        nonlocal queue, data_buffer
+        # nonlocal queue, data_buffer
         if seg_url in ts_memory_cache:
             await queue.put(ts_memory_cache[seg_url])
             return
