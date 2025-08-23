@@ -8,7 +8,7 @@ on:
       - 'v*.*.*'  # バージョンタグの push でもトリガー
 
 env:
-  IMAGE_NAME: ghcr.io/yunfie_twitter/oculora  # 個人アカウント用
+  IMAGE_NAME: ghcr.io/oculora-project/oculora  # 個人アカウント用
 
 jobs:
   build-and-push:
