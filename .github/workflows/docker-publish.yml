@@ -22,7 +22,7 @@ jobs:
         uses: docker/login-action@v2
         with:
           registry: ghcr.io
-          username: oculora-project
+          username: yunfie_twitter
           password: ${{ secrets.CR_PAT }}
 
       - name: Build Docker image
