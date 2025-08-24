@@ -24,12 +24,17 @@ async def _fetch_initial_data(page_url: str) -> dict:
 @router.get(config.ENDPOINTS["channel_about"])
 @cached(ttl=1800, cache=SimpleMemoryCache, key_builder=lambda f, channel_url: f"about:{channel_url}")
 async def channel_about(
-    channel_url: str = Query(..., description="https://www.youtube.com/@<handle>")
+    channel_url: str = Query(..., description="https://www.youtube.com/@<handle> or UCxxxx")
 ):
-    if not re.match(r"^https://(www\.)?youtube\.com/@.+", channel_url):
-        raise HTTPException(400, "invalid channel url")
+    # channel_url がハンドル or チャンネルIDかを判定
+    if channel_url.startswith("UC") and len(channel_url) >= 20:
+        page_url = f"https://www.youtube.com/channel/{channel_url}"
+    elif re.match(r"^https://(www\.)?youtube\.com/@.+", channel_url):
+        page_url = channel_url
+    else:
+        raise HTTPException(400, "invalid channel url or id")
 
-    data = await _fetch_initial_data(channel_url + "/about")
+    data = await _fetch_initial_data(page_url + "/about")
     try:
         meta = data["metadata"]["channelMetadataRenderer"]
         return JSONResponse({
@@ -42,3 +47,4 @@ async def channel_about(
     except Exception as e:
         logger.error(f"/channel-about parse error: {e}")
         raise HTTPException(500, "structure changed")
+
