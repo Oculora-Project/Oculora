@@ -24,7 +24,7 @@ logging.basicConfig(level=config.LOGGING_SETTINGS["level"],
                     format=config.LOGGING_SETTINGS["format"])
 
 app = FastAPI(title="Oculora Project",
-              version="1.1.0",
+              version="1.0.0",
               debug=config.SERVER_SETTINGS["debug"])
 
 app.add_middleware(
