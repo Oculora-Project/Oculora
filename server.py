@@ -14,6 +14,7 @@ from routers.extract_handler      import router as extract_router
 from routers.health_handler import router as health_router
 from routers.comments_handler import router as comments_router
 from routers.search_handler import router as search_router
+from routers.download_handler import router as download_router
 
 import config
 
@@ -23,7 +24,7 @@ logging.basicConfig(level=config.LOGGING_SETTINGS["level"],
                     format=config.LOGGING_SETTINGS["format"])
 
 app = FastAPI(title="Oculora Project",
-              version="1.0.4",
+              version="1.1.0",
               debug=config.SERVER_SETTINGS["debug"])
 
 app.add_middleware(
@@ -77,6 +78,8 @@ app.include_router(stream_direct_router)
 app.include_router(health_router)
 app.include_router(comments_router)
 app.include_router(search_router)
+app.include_router(download_router)
+
 
 # ──────────────────────
 # アプリケーション起動設定
