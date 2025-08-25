@@ -1,74 +1,59 @@
-import os
-import asyncio
-from pathlib import Path
-from typing import List, Optional
-
 from fastapi import APIRouter, Query, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
-
-import yt_dlp
+from yt_dlp import YoutubeDL
+from pathlib import Path
+import shutil
 
 router = APIRouter()
 
 DOWNLOAD_DIR = Path("./downloads")
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 
-# ダウンロード管理用メモリ(シンプル実装)
-download_tasks = {}  # {url: asyncio.Task}
-download_files = {}  # {url: filepath}
-
-
-async def ytdl_download(url: str) -> Path:
+@router.get("/download")
+def download_video(
+    url: str = Query(..., description="YouTube動画URL"),
+    format_code: str = Query(None, description="yt-dlpフォーマットコード。例：'best', 'bestaudio', 'bestvideo[height<=720]'"),
+    filename: str = Query(None, description="保存ファイル名。拡張子含む（指定なければ自動決定）")
+):
     """
-    yt-dlp で指定URLを非同期でダウンロードし、
-    ダウンロードファイルパスを返す。
+    YouTube動画ダウンロードAPI。
+    format_codeで画質・フォーマット指定（例：mp3ならbestaudio+音声変換が自動でできる）
+    filenameを指定するとその名前で保存。指定無ければyt-dlpのデフォルト名。
     """
     ydl_opts = {
-        "outtmpl": str(DOWNLOAD_DIR / "%(id)s.%(ext)s"),
+        "format": format_code or "best",
+        "outtmpl": str(DOWNLOAD_DIR / "%(title)s.%(ext)s"),
         "quiet": True,
         "no_warnings": True,
+        "ignoreerrors": True,
+        "postprocessors": []
     }
 
-    def run_sync():
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url)
-            filename = ydl.prepare_filename(info)
-            return Path(filename)
+    # mp3対応例: format_codeにaudio系指定なら変換追加も可能
+    if format_code and ("mp3" in format_code or "bestaudio" in format_code):
+        ydl_opts["postprocessors"].append({
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "192",  # 音質ビットレート
+        })
 
-    loop = asyncio.get_event_loop()
-    path = await loop.run_in_executor(None, run_sync)
-    return path
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            out_file = ydl.prepare_filename(info)
+            # ファイル名カスタム対応
+            if filename:
+                ext = Path(out_file).suffix
+                new_path = DOWNLOAD_DIR / filename
+                if not new_path.suffix:
+                    new_path = new_path.with_suffix(ext)
+                shutil.move(out_file, new_path)
+                out_file = str(new_path)
 
+            return FileResponse(out_file, media_type="application/octet-stream", filename=Path(out_file).name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
 
-@router.get("/download")
-async def download_video(url: str = Query(..., description="YouTube動画URL")):
-    """
-    ダウンロードリクエスト。既にダウンロード中・済なら状態返す。
-    """
-    if url in download_files:
-        return {"status": "completed", "file": str(download_files[url].name)}
-
-    if url in download_tasks:
-        return {"status": "downloading"}
-
-    task = asyncio.create_task(ytdl_download(url))
-
-    download_tasks[url] = task
-
-    def _done_callback(task: asyncio.Task):
-        try:
-            filepath = task.result()
-            download_files[url] = filepath
-        except Exception as e:
-            # エラー処理。必要ならログ追加
-            if url in download_files:
-                del download_files[url]
-        finally:
-            download_tasks.pop(url, None)
-
-    task.add_done_callback(_done_callback)
-
-    return {"status": "download_started"}
 
 
 @router.get("/files")
