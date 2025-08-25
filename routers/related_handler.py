@@ -20,20 +20,21 @@ async def related_videos(url: str = Query(..., description="https://www.youtube.
     if "youtube.com/watch" not in url:
         raise HTTPException(400, "invalid url")
 
-    async def run_yt_dlp_extract_1():
+    # Inner sync function for running blocking extraction
+    def run_yt_dl_extract_1():
         with YoutubeDL(config.YTDLP_OPTIONS | {"skip_download": True, "quiet": True}) as ydl:
-            return ydl.extract_info(url, download=False)
-    info = await asyncio.to_thread(run_yt_dlp_extract_1)
+            return ydl.extract_info(url)
+    info = await asyncio.to_thread(run_yt_dl_extract_1)
 
     text = (info.get("title", "") + " " + (info.get("description") or "")).lower()
-    words = re.findall(r"[A-Za-z0-9\u3040-\u30ff\u4e00-\u9fff]+", text)
+    words = re.findall(r"[A-Za-z0-9\u3040-\u30ff\u9fff]+", text)
     stop = {"the", "and", "for", "to", "に", "の", "を", "が", "は", "で", "と"}
     freq = collections.Counter(w for w in words if w not in stop and len(w) > 1)
     if not freq:
         freq = collections.Counter(words)
     query = " ".join(w for w, _ in freq.most_common(5))
 
-    async def run_yt_dlp_extract_2():
+    def run_yt_dl_extract_2():
         search_opts = config.YTDLP_OPTIONS | {
             "extract_flat": True,
             "skip_download": True,
@@ -41,8 +42,8 @@ async def related_videos(url: str = Query(..., description="https://www.youtube.
             "default_search": f"ytsearch{limit}",
         }
         with YoutubeDL(search_opts) as ydl:
-            return ydl.extract_info(query, download=False)
-    res = await asyncio.to_thread(run_yt_dlp_extract_2)
+            return ydl.extract_info(query)
+    res = await asyncio.to_thread(run_yt_dl_extract_2)
 
     entries = []
     for e in res.get("entries", []):
@@ -60,3 +61,4 @@ async def related_videos(url: str = Query(..., description="https://www.youtube.
             break
 
     return JSONResponse(entries)
+
