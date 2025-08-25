@@ -1,17 +1,19 @@
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 from aiocache import cached, SimpleMemoryCache
-import config
+
 from routers.ytdlp_handler import run_ydl
+import config
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.get(config.ENDPOINTS["stream_direct"])
 @cached(ttl=1800, cache=SimpleMemoryCache, key_builder=lambda f, video_url: f"m3u8:{video_url}")
-def stream_direct(
+async def stream_direct(
     video_url: str = Query(..., description="YouTube 動画 URL")
 ):
     """
@@ -22,7 +24,8 @@ def stream_direct(
       → { "url": "https://...index.m3u8" }
     """
     try:
-        info = run_ydl(video_url, custom={
+        # yt-dlpは同期 I/O 処理なので非同期化
+        info = await asyncio.to_thread(run_ydl, video_url, custom={
             "skip_download": True,
             "quiet": True,
             "allow_unplayable_formats": True
