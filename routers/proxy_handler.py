@@ -1,7 +1,7 @@
 import re
 import asyncio
 import logging
-from urllib.parse import urljoin, quote
+from urllib.parse import urljoin, quote, urlparse
 
 import httpx
 from fastapi import APIRouter, Request, HTTPException
@@ -42,7 +42,13 @@ async def fetch_with_retry(url: str, headers: dict, retries: int = None):
             await asyncio.sleep(1)
 
 def rewrite_m3u8(text: str, base_url: str, proxy_base: str) -> str:
-    """m3u8 内の URL / KEY URI をプロキシ付きに書き換え + EXT-X-START 追加"""
+    """
+    m3u8 内の URL / KEY URI をプロキシ付きに書き換え + EXT-X-START 追加
+    
+    修正:
+    - TSセグメント行（絶対URL・相対URLともに）を確実にプロキシ化
+    - URIパラメータ（KEY等）もプロキシ化
+    """
     out = []
 
     # 冒頭に EXT-X-START を挿入（存在しない場合のみ）
@@ -50,17 +56,32 @@ def rewrite_m3u8(text: str, base_url: str, proxy_base: str) -> str:
         out.append("#EXT-X-START:TIME-OFFSET=0,PRECISE=YES")
 
     def proxify(u: str) -> str:
-        full = urljoin(base_url, u)
+        """URLをプロキシ経由のURLに変換"""
+        # 絶対URLかどうかチェック
+        if u.startswith(('http://', 'https://')):
+            full = u
+        else:
+            # 相対URLの場合はbase_urlと結合
+            full = urljoin(base_url, u)
         return proxy_base + quote(full, safe=config.PROXY_SETTINGS["url_safe_chars"])
 
     for line in text.splitlines():
-        if line.startswith("#"):
+        stripped = line.strip()
+        
+        if not stripped:
+            out.append(line)
+            continue
+            
+        # コメント行（タグ行）
+        if stripped.startswith("#"):
+            # URI="..." パターンを書き換え（KEY等）
             line = URI_RE.sub(lambda m: f'URI="{proxify(m.group(1))}"', line)
             out.append(line)
-        elif line.strip():
-            out.append(proxify(line.strip()))
         else:
-            out.append(line)
+            # コメントでない行 = セグメントURL（.ts等）
+            # TSセグメント、初期化セグメント等をプロキシ化
+            out.append(proxify(stripped))
+            
     return "\n".join(out)
 
 # ───────────────── TS 先読み + メモリキャッシュ ─────────────────
@@ -78,26 +99,36 @@ async def stream_ts_cached(urls: list, headers: dict,
     data_buffer = bytearray()
 
     async def fetch_segment(seg_url: str):
-        # nonlocal queue, data_buffer
+        nonlocal data_buffer
         if seg_url in ts_memory_cache:
             await queue.put(ts_memory_cache[seg_url])
             return
-        async with httpx.AsyncClient(http2=True, timeout=None) as client:
-            async with client.stream("GET", seg_url, headers=headers) as r:
-                if r.status_code >= 400:
-                    await queue.put(HTTPException(r.status_code, f"Upstream returned {r.status_code}"))
-                    return
-                chunk_size = init_chunk
-                async for chunk in r.aiter_bytes(chunk_size=chunk_size):
-                    await queue.put(chunk)
-                    data_buffer.extend(chunk)
-        ts_memory_cache[seg_url] = bytes(data_buffer)
+        
+        try:
+            async with httpx.AsyncClient(http2=True, timeout=None) as client:
+                async with client.stream("GET", seg_url, headers=headers) as r:
+                    if r.status_code >= 400:
+                        logger.error(f"Segment fetch error {r.status_code}: {seg_url}")
+                        await queue.put(HTTPException(r.status_code, f"Upstream returned {r.status_code}"))
+                        return
+                    
+                    chunk_size = init_chunk
+                    seg_data = bytearray()
+                    async for chunk in r.aiter_bytes(chunk_size=chunk_size):
+                        await queue.put(chunk)
+                        seg_data.extend(chunk)
+                    
+                    ts_memory_cache[seg_url] = bytes(seg_data)
+        except Exception as e:
+            logger.error(f"Segment fetch exception: {type(e).__name__}: {e}")
+            await queue.put(HTTPException(500, f"Segment fetch failed: {str(e)}"))
 
     async def producer():
         tasks = []
         for i, seg_url in enumerate(urls[:prefetch_segments]):
             tasks.append(asyncio.create_task(fetch_segment(seg_url)))
-        await asyncio.gather(*tasks)
+        await asyncio.gather(*tasks, return_exceptions=True)
+        
         # それ以降は順次取得
         for seg_url in urls[prefetch_segments:]:
             await fetch_segment(seg_url)
@@ -123,10 +154,10 @@ async def stream_ts_cached(urls: list, headers: dict,
 # ───────────────── /proxy エンドポイント ─────────────────
 @router.get(config.ENDPOINTS["proxy"])
 async def proxy(url: str, request: Request):
-    logger.debug(f"Proxy request: {url}")
+    logger.info(f"[PROXY] Request: {url}")
     try:
         m3u8_mark = config.STREAM_EXTRACTION["m3u8_check_string"]
-        is_m3u8 = url.endswith(m3u8_mark)
+        is_m3u8 = url.endswith(m3u8_mark) or "/manifest/" in url
         headers = {}
         if "range" in request.headers:
             headers["Range"] = request.headers["range"]
@@ -137,16 +168,24 @@ async def proxy(url: str, request: Request):
             cache = Cache(SimpleMemoryCache)
             cache_key = _cache_key_m3u8(url)
             cached_txt = await cache.get(cache_key)
+            
             if cached_txt is None:
+                logger.info(f"[PROXY] Fetching m3u8: {url}")
                 r = await fetch_with_retry(url, headers)
+                
+                # プロキシベースURLを構築
                 base_url = str(request.base_url).rstrip('/')
                 proxy_base = f"{base_url}/{config.PROXY_SETTINGS['base_path']}"
+                
+                logger.debug(f"[PROXY] Rewriting m3u8 with proxy_base: {proxy_base}")
                 body = rewrite_m3u8(r.text, url, proxy_base)
+                
                 await cache.set(cache_key, body, ttl=config.CACHE_SETTINGS["ttl_m3u8"])
-                logger.debug(f"m3u8 cached: {url}")
+                logger.info(f"[PROXY] m3u8 cached: {url}")
             else:
                 body = cached_txt
-                logger.debug(f"m3u8 cache hit: {url}")
+                logger.info(f"[PROXY] m3u8 cache hit: {url}")
+            
             return Response(
                 body,
                 media_type=m3u8_mt,
@@ -154,8 +193,9 @@ async def proxy(url: str, request: Request):
             )
 
         # ---------- TS / KEY / その他 ----------
-        # 単一TSの場合もリスト化
-        ts_urls = [url] if url.endswith(".ts") else [url]
+        logger.info(f"[PROXY] Streaming segment: {url}")
+        ts_urls = [url]
+        
         return StreamingResponse(
             stream_ts_cached(ts_urls, headers, init_chunk=config.PROXY_SETTINGS["buffer_size"]),
             media_type="application/octet-stream",
@@ -163,7 +203,7 @@ async def proxy(url: str, request: Request):
         )
 
     except Exception as e:
-        logger.error(f"Proxy error: {type(e).__name__}: {e}")
+        logger.error(f"[PROXY] Error: {type(e).__name__}: {e}", exc_info=True)
         raise HTTPException(
             500,
             config.RESPONSE_SETTINGS["error_messages"]["upstream_error"],
